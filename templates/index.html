@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rummikub Timer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════
+       TELA 1 — CONFIGURAÇÃO INICIAL
+  ════════════════════════════════════════════════ -->
+  <div id="screen-setup" class="screen active">
+    <div class="container">
+
+      <header class="game-header">
+        <div class="title-tiles">
+          <span class="tile red">R</span>
+          <span class="tile blue">U</span>
+          <span class="tile orange">M</span>
+          <span class="tile black">M</span>
+          <span class="tile red">I</span>
+          <span class="tile blue">K</span>
+          <span class="tile orange">U</span>
+          <span class="tile black">B</span>
+        </div>
+        <p class="game-subtitle">Controle de Partidas</p>
+      </header>
+
+      <div class="card">
+        <h2 class="card-title">Configurar Jogadores</h2>
+
+        <div class="global-time-row">
+          <div class="field-group">
+            <label>⏱ Minutos por turno (todos os jogadores)</label>
+            <input type="number" id="global-minutes" value="2" min="0" max="10" />
+          </div>
+        </div>
+
+        <div id="players-list"></div>
+
+        <button id="btn-add-player" class="btn btn-ghost btn-block" onclick="addPlayer()">
+          + Adicionar Jogador
+        </button>
+
+        <div id="setup-error" class="alert alert-error hidden"></div>
+
+        <button class="btn btn-primary btn-block btn-lg mt-16" onclick="startGame()">
+          ▶ Iniciar Jogo
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       TELA 2 — TURNO
+  ════════════════════════════════════════════════ -->
+  <div id="screen-turn" class="screen">
+    <div class="container">
+
+      <div class="turn-topbar">
+        <div class="round-pill">Rodada <span id="turn-round">1</span></div>
+        <div id="turn-order-list" class="turn-order"></div>
+      </div>
+
+      <div id="current-card" class="player-turn-card">
+        <div class="turn-label">Vez de</div>
+        <div id="turn-name" class="turn-player-name">—</div>
+
+        <div id="timer-box" class="timer-box">
+          <span id="timer-text">00:00</span>
+        </div>
+        <div id="timer-status" class="timer-status">Jogando...</div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-success btn-block btn-lg" onclick="nextTurn()">
+          ➡ Próximo Jogador
+        </button>
+        <button class="btn btn-win btn-block btn-lg" onclick="showWinModal()">
+          🏆 Bateu!
+        </button>
+      </div>
+
+      <div class="scoreboard-panel">
+        <h3 class="panel-title">Placar</h3>
+        <div id="mini-scoreboard" class="mini-scores"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       TELA 3 — PLACAR DA RODADA
+  ════════════════════════════════════════════════ -->
+  <div id="screen-round-end" class="screen">
+    <div class="container">
+
+      <div class="winner-spotlight">
+        <div class="trophy-icon">🏆</div>
+        <h1 id="round-winner-name" class="winner-name">—</h1>
+        <p class="winner-sub">venceu a rodada!</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Placar — Rodada <span id="round-end-number">1</span></h2>
+        <div id="round-end-scoreboard" class="score-list"></div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-primary btn-block btn-lg" onclick="newRound()">
+          🔄 Nova Rodada
+        </button>
+        <button class="btn btn-danger btn-block btn-lg" onclick="finishGame()">
+          🏁 Finalizar Jogo
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       TELA 4 — RESULTADO FINAL
+  ════════════════════════════════════════════════ -->
+  <div id="screen-final" class="screen">
+    <div class="container">
+
+      <header class="game-header">
+        <div class="title-tiles small">
+          <span class="tile red">F</span>
+          <span class="tile blue">I</span>
+          <span class="tile orange">M</span>
+        </div>
+        <p class="game-subtitle">de Jogo!</p>
+      </header>
+
+      <div class="champion-card">
+        <div class="trophy-icon large">🏆</div>
+        <h1 id="final-champion" class="champion-name">—</h1>
+        <p class="champion-sub">Campeão(ã) da partida!</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Ranking Final</h2>
+        <div id="final-ranking" class="ranking-list"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Resumo Geral</h2>
+        <div id="final-summary" class="summary-grid"></div>
+      </div>
+
+      <button class="btn btn-primary btn-block btn-lg" onclick="resetGame()">
+        🎮 Novo Jogo
+      </button>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       MODAL — CONFIRMAR VITÓRIA
+  ════════════════════════════════════════════════ -->
+  <div id="win-modal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event)">
+    <div class="modal-box">
+      <div class="trophy-icon">🏆</div>
+      <h2 id="win-modal-text" class="modal-title">Tem certeza?</h2>
+      <div class="modal-actions">
+        <button class="btn btn-win btn-block" onclick="confirmWin()">Sim, registrar vitória</button>
+        <button class="btn btn-ghost btn-block mt-8" onclick="closeWinModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
