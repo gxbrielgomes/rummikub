@@ -6,7 +6,7 @@
   <title>Rummikub Timer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
 
@@ -83,6 +83,9 @@
         </button>
         <button class="btn btn-win btn-block btn-lg" onclick="showWinModal()">
           🏆 Bateu!
+        </button>
+        <button id="btn-pause" class="btn btn-ghost btn-block" onclick="pauseResumeTimer()">
+          ⏸ Pausar
         </button>
       </div>
 
@@ -175,6 +178,28 @@
     </div>
   </div>
 
-  <script src="/static/script.js"></script>
+  <!-- ═══════════════════════════════════════════════
+       MODAL — CONFIRMAR RESET TOTAL
+  ════════════════════════════════════════════════ -->
+  <div id="reset-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="trophy-icon">🗑️</div>
+      <h2 class="modal-title">Limpar tudo?</h2>
+      <p style="text-align:center;color:var(--text-muted,#888);margin-bottom:16px;">
+        Todo o progresso do jogo será apagado e o app voltará do zero.
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-danger btn-block" onclick="confirmClearAll()">Sim, limpar tudo</button>
+        <button class="btn btn-ghost btn-block mt-8" onclick="closeResetModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Botão flutuante de reset -->
+  <button id="btn-clear-all" class="btn-clear-float" onclick="openResetModal()" title="Limpar tudo e voltar ao início">
+    🗑️ Limpar tudo
+  </button>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

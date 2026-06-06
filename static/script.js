@@ -9,14 +9,18 @@ const COLOR_HEX   = ['#e74c3c', '#3498db', '#e67e22', '#95a5a6'];
 const MEDALS      = ['🥇', '🥈', '🥉', '4º'];
 
 // ── Estado do timer ─────────────────────────────────────────────
-let timerInterval  = null;
-let timerStartTime = null;  // Date.now() no início do turno
-let timerDuration  = 0;     // segundos configurados para o turno atual
-let lastBeepSecond = Infinity; // controle de beeps por segundo
+let timerInterval      = null;
+let timerStartEpochMs  = null;  // server turn_start_epoch * 1000
+let timerDuration      = 0;     // segundos do turno atual
+let timerIsPaused      = false;
+let timerPausedElapsed = 0;     // segundos decorridos no momento do pause
+let lastBeepSecond     = Infinity;
+let currentTurnKey     = null;  // 'round-playerIdx' — detecta mesmo turno no SSE
 
 // ── Estado do jogo (cache local do último retorno da API) ────────
-let gameState  = null;
-let playerCount = 0; // quantidade de linhas na tela de setup
+let gameState         = null;
+let playerCount       = 0;
+let isPerformingAction = false; // bloqueia re-render do SSE durante ações ativas
 
 // ── Áudio ────────────────────────────────────────────────────────
 let audioCtx   = null;
@@ -66,13 +70,15 @@ function playTickBeep() {
   } catch (_) {}
 }
 
-/** Toca alarm.mp3 em loop até stopAlarm() */
+/** Toca alarm.mp3 uma única vez (sem loop) */
 function playAlarm() {
   if (alarmAudio) return;
   alarmAudio = new Audio('/static/alarm.mp3');
-  alarmAudio.loop = true;
+  alarmAudio.loop = false;
   alarmAudio.volume = 1.0;
   alarmAudio.play().catch(() => {});
+  // Para automaticamente após 4 s para não parecer game-over
+  setTimeout(stopAlarm, 4000);
 }
 
 function stopAlarm() {
@@ -102,6 +108,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (_) {
     // Servidor inacessível ou sem jogo — fica na tela de setup
   }
+
+  // ── SSE: atualizações em tempo real de outros dispositivos ──────
+  const evtSource = new EventSource('/api/events');
+  evtSource.onmessage = async () => {
+    if (isPerformingAction) return;
+    try {
+      const res   = await fetch('/api/state');
+      const state = await res.json();
+      if (!state.status || state.status === 'no_game') {
+        resetLocalState();
+        return;
+      }
+      gameState = state;
+      renderByState(state);
+    } catch (_) {}
+  };
+  // reconecta automaticamente em caso de queda
+  evtSource.onerror = () => {};
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -259,8 +283,8 @@ function showTurnScreen(state) {
   // Mini placar
   renderMiniScoreboard(state.players);
 
-  // Timer
-  startTimer(player.turn_time_seconds);
+  // Timer — sincronizado com o servidor para multi-dispositivo
+  syncTimerFromState(state);
 }
 
 function renderMiniScoreboard(players) {
@@ -277,13 +301,53 @@ function renderMiniScoreboard(players) {
 // ════════════════════════════════════════════════════════════════
 //  TIMER
 // ════════════════════════════════════════════════════════════════
+
+/**
+ * Sincroniza o timer com o estado vindo do servidor.
+ * Garante que todos os dispositivos mostrem o mesmo tempo.
+ */
+function syncTimerFromState(state) {
+  const newKey     = `${state.round}-${state.current_player_index}`;
+  const isSameTurn = newKey === currentTurnKey;
+
+  // Para o intervalo sem matar o alarme se for o mesmo turno
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  if (!isSameTurn) {
+    stopAlarm();
+    lastBeepSecond = Infinity;
+    currentTurnKey = newKey;
+  }
+
+  timerDuration      = state.current_player.turn_time_seconds;
+  timerIsPaused      = state.is_paused;
+  timerPausedElapsed = state.paused_elapsed || 0;
+
+  if (state.is_paused) {
+    timerStartEpochMs = null;
+    const remaining = Math.max(0, timerDuration - timerPausedElapsed);
+    renderTimerDisplay(remaining);
+    stopAlarm();
+    setTimerBox(remaining <= 0 ? 'danger' : (remaining <= 20 ? 'warning' : ''));
+    setTimerStatus('⏸ Pausado', false);
+    updatePauseButton(true);
+  } else {
+    // Usa elapsed_seconds do servidor para reconstruir o start local.
+    // Isso elimina o clock skew entre dispositivos com relógios diferentes.
+    timerStartEpochMs = Date.now() - (state.elapsed_seconds || 0) * 1000;
+    updatePauseButton(false);
+    timerInterval = setInterval(tickTimer, 250);
+  }
+}
+
 function startTimer(durationSeconds) {
   stopTimer();
-  timerDuration  = durationSeconds;
-  timerStartTime = Date.now();
-  lastBeepSecond = Infinity;
+  timerDuration      = durationSeconds;
+  timerStartEpochMs  = Date.now();
+  timerIsPaused      = false;
+  timerPausedElapsed = 0;
+  lastBeepSecond     = Infinity;
+  currentTurnKey     = null;
 
-  // Estado visual inicial
   setTimerBox('');
   setTimerStatus('Jogando...', false);
   renderTimerDisplay(durationSeconds);
@@ -300,7 +364,8 @@ function stopTimer() {
 }
 
 function tickTimer() {
-  const elapsed   = (Date.now() - timerStartTime) / 1000;
+  if (timerIsPaused || !timerStartEpochMs) return;
+  const elapsed   = (Date.now() - timerStartEpochMs) / 1000;
   const remaining = timerDuration - elapsed;
 
   // ── Sons por segundo ──────────────────────────────────────────
@@ -316,13 +381,14 @@ function tickTimer() {
 
   if (remaining <= 0) {
     renderTimerDisplay(0);
+    // Para de contar — tempo esgotado, aguarda o botão Próximo Jogador
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     const box = document.getElementById('timer-box');
     if (!box.classList.contains('danger')) {
       setTimerBox('danger');
-      setTimerStatus('TEMPO ESGOTADO!', true);
+      setTimerStatus('⏰ Tempo esgotado — passe o turno!', true);
       playAlarm();
     }
-    // O intervalo continua rodando para registrar o tempo real ao clicar
   } else if (remaining <= 20) {
     renderTimerDisplay(remaining);
     setTimerBox('warning');
@@ -354,14 +420,16 @@ function setTimerStatus(text, isTimeout) {
 
 /** Retorna o tempo decorrido desde o início do turno, em segundos. */
 function getTimeUsed() {
-  if (!timerStartTime) return 0;
-  return Math.round((Date.now() - timerStartTime) / 1000);
+  if (timerIsPaused) return Math.round(timerPausedElapsed);
+  if (!timerStartEpochMs) return 0;
+  return Math.round((Date.now() - timerStartEpochMs) / 1000);
 }
 
 // ════════════════════════════════════════════════════════════════
 //  PRÓXIMO JOGADOR
 // ════════════════════════════════════════════════════════════════
 async function nextTurn() {
+  isPerformingAction = true;
   const timeUsed = getTimeUsed();
   stopTimer();
 
@@ -370,6 +438,7 @@ async function nextTurn() {
     const state = await res.json();
 
     if (!res.ok) {
+      isPerformingAction = false;
       alert(state.error || 'Erro ao passar turno.');
       // Retoma o timer do jogador atual se houver erro
       if (gameState && gameState.current_player) {
@@ -382,6 +451,8 @@ async function nextTurn() {
     showTurnScreen(state);
   } catch (_) {
     alert('Erro de conexão com o servidor.');
+  } finally {
+    isPerformingAction = false;
   }
 }
 
@@ -411,6 +482,7 @@ function handleModalOverlayClick(event) {
 
 async function confirmWin() {
   closeWinModal();
+  isPerformingAction = true;
   const timeUsed = getTimeUsed();
   stopTimer();
 
@@ -427,6 +499,8 @@ async function confirmWin() {
     showRoundEndScreen(state);
   } catch (_) {
     alert('Erro de conexão com o servidor.');
+  } finally {
+    isPerformingAction = false;
   }
 }
 
@@ -464,6 +538,7 @@ function showRoundEndScreen(state) {
 //  NOVA RODADA
 // ════════════════════════════════════════════════════════════════
 async function newRound() {
+  isPerformingAction = true;
   try {
     const res   = await apiPost('/api/new-round', {});
     const state = await res.json();
@@ -477,6 +552,8 @@ async function newRound() {
     showTurnScreen(state);
   } catch (_) {
     alert('Erro de conexão com o servidor.');
+  } finally {
+    isPerformingAction = false;
   }
 }
 
@@ -484,6 +561,7 @@ async function newRound() {
 //  FINALIZAR JOGO
 // ════════════════════════════════════════════════════════════════
 async function finishGame() {
+  isPerformingAction = true;
   try {
     const res   = await apiPost('/api/finish', {});
     const state = await res.json();
@@ -497,6 +575,8 @@ async function finishGame() {
     showFinalScreen(state);
   } catch (_) {
     alert('Erro de conexão com o servidor.');
+  } finally {
+    isPerformingAction = false;
   }
 }
 
@@ -567,8 +647,10 @@ function showFinalScreen(state) {
 //  NOVO JOGO (volta à tela de setup)
 // ════════════════════════════════════════════════════════════════
 function resetGame() {
-  gameState      = null;
-  timerStartTime = null;
+  gameState         = null;
+  timerStartEpochMs = null;
+  timerIsPaused     = false;
+  currentTurnKey    = null;
   stopTimer();
 
   // Limpa a lista de jogadores e recria com 2 slots
@@ -577,6 +659,45 @@ function resetGame() {
   addPlayer();
   addPlayer();
 
+  showScreen('screen-setup');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  PAUSE / RESUME
+// ════════════════════════════════════════════════════════════════
+async function pauseResumeTimer() {
+  if (!gameState || gameState.status !== 'playing') return;
+  const endpoint = timerIsPaused ? '/api/resume' : '/api/pause';
+  try {
+    const res   = await apiPost(endpoint, {});
+    const state = await res.json();
+    if (res.ok) {
+      gameState = state;
+      syncTimerFromState(state);
+    }
+  } catch (_) {}
+}
+
+function updatePauseButton(isPaused) {
+  const btn = document.getElementById('btn-pause');
+  if (!btn) return;
+  btn.textContent = isPaused ? '▶ Continuar' : '⏸ Pausar';
+  btn.className = 'btn btn-block ' + (isPaused ? 'btn-success' : 'btn-ghost');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  RESET LOCAL (quando outro dispositivo limpa o jogo via SSE)
+// ════════════════════════════════════════════════════════════════
+function resetLocalState() {
+  gameState         = null;
+  timerStartEpochMs = null;
+  timerIsPaused     = false;
+  currentTurnKey    = null;
+  stopTimer();
+  document.getElementById('players-list').innerHTML = '';
+  playerCount = 0;
+  addPlayer();
+  addPlayer();
   showScreen('screen-setup');
 }
 
@@ -634,4 +755,24 @@ function apiPost(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify(body),
   });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  RESET TOTAL — limpar tudo e voltar do zero
+// ════════════════════════════════════════════════════════════════
+function openResetModal() {
+  document.getElementById('reset-modal').classList.remove('hidden');
+}
+
+function closeResetModal() {
+  document.getElementById('reset-modal').classList.add('hidden');
+}
+
+async function confirmClearAll() {
+  closeResetModal();
+  try {
+    await fetch('/api/reset', { method: 'POST' });
+  } catch (_) {}
+  // Para garantir que tudo volta ao estado inicial, recarrega a página
+  window.location.reload();
 }
